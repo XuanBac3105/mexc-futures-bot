@@ -7,10 +7,13 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+from dotenv import load_dotenv
+
+# Load biến môi trường từ file .env
+load_dotenv()
 
 # ================== CONFIG ==================
-# Lấy token từ biến môi trường hoặc dùng default
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8317423682:AAEF61I0juFprcIPrdqgWBWXt6fibE-xHng")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FUTURES_BASE = "https://contract.mexc.co"
 
