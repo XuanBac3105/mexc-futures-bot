@@ -29,13 +29,15 @@ MIN_VOL_THRESHOLD = 100000
 SUBSCRIBERS = set()
 KNOWN_SYMBOLS = set()  # Danh sách coin đã biết
 ALL_SYMBOLS = []  # Cache danh sách coin
+CACHED_MOVERS = []  # Cache kết quả quét mới nhất
+LAST_SCAN_TIME = None  # Thời gian quét lần cuối
 
 
 # ================== UTIL ==================
 async def fetch_json(session, url, params=None):
     try:
         async with session.get(url, params=params, timeout=10) as r:
-            print(f"📡 API Call: {url} - Status: {r.status}")
+            # Chỉ log lỗi, không log success để giảm spam
             r.raise_for_status()
             data = await r.json()
             return data.get("data", data)
@@ -118,33 +120,49 @@ async def unsubscribe(update, context):
 
 
 async def calc_movers(session, interval, symbols):
-    """Tính % thay đổi giá cho danh sách symbols"""
-    movers = []
-    for sym in symbols:
+    """Tính % thay đổi giá cho danh sách symbols - SONG SONG"""
+    import asyncio
+    
+    async def get_single_mover(sym):
+        """Lấy dữ liệu cho 1 coin"""
         try:
             closes, vols = await get_kline(session, sym, interval, 2)
             if len(closes) < 2 or closes[-2] == 0:
-                continue
+                return None
             
             old_price = closes[-2]
             new_price = closes[-1]
             vol = vols[-1]
             
             chg = (new_price - old_price) / old_price * 100
-            movers.append((sym, chg, old_price, new_price, vol))
+            return (sym, chg, old_price, new_price, vol)
         except Exception as e:
-            # Bỏ qua coin lỗi (có thể mới list hoặc không có data)
-            pass
+            return None
+    
+    # Quét TẤT CẢ coins SONG SONG (không đợi từng coin)
+    tasks = [get_single_mover(sym) for sym in symbols]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Lọc bỏ None và exceptions
+    movers = [r for r in results if r is not None and not isinstance(r, Exception)]
+    
     return movers
 
 
 async def top10(update, context):
     """Lệnh xem top 10 gainers và losers"""
-    await update.message.reply_text("⏳ Đang quét tất cả coin...")
+    global CACHED_MOVERS, LAST_SCAN_TIME
     
-    async with aiohttp.ClientSession() as session:
-        symbols = await get_all_symbols(session)
-        movers = await calc_movers(session, "Min5", symbols)
+    # Dùng cache nếu có (data mới nhất từ job tự động)
+    if CACHED_MOVERS:
+        movers = CACHED_MOVERS
+        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
+        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
+    else:
+        await update.message.reply_text("⏳ Đang quét tất cả coin...")
+        async with aiohttp.ClientSession() as session:
+            symbols = await get_all_symbols(session)
+            movers = await calc_movers(session, "Min5", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -171,11 +189,18 @@ async def top10(update, context):
 
 async def gainers5(update, context):
     """Lệnh xem top 10 gainers"""
-    await update.message.reply_text("⏳ Đang quét...")
+    global CACHED_MOVERS, LAST_SCAN_TIME
     
-    async with aiohttp.ClientSession() as session:
-        symbols = await get_all_symbols(session)
-        movers = await calc_movers(session, "Min5", symbols)
+    # Dùng cache nếu có
+    if CACHED_MOVERS:
+        movers = CACHED_MOVERS
+        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
+        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
+    else:
+        await update.message.reply_text("⏳ Đang quét...")
+        async with aiohttp.ClientSession() as session:
+            symbols = await get_all_symbols(session)
+            movers = await calc_movers(session, "Min5", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -195,11 +220,18 @@ async def gainers5(update, context):
 
 async def losers5(update, context):
     """Lệnh xem top 10 losers"""
-    await update.message.reply_text("⏳ Đang quét...")
+    global CACHED_MOVERS, LAST_SCAN_TIME
     
-    async with aiohttp.ClientSession() as session:
-        symbols = await get_all_symbols(session)
-        movers = await calc_movers(session, "Min5", symbols)
+    # Dùng cache nếu có
+    if CACHED_MOVERS:
+        movers = CACHED_MOVERS
+        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
+        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
+    else:
+        await update.message.reply_text("⏳ Đang quét...")
+        async with aiohttp.ClientSession() as session:
+            symbols = await get_all_symbols(session)
+            movers = await calc_movers(session, "Min5", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -345,6 +377,11 @@ async def job_scan_pumps_dumps(context):
         
         # Tính movers cho tất cả coin
         movers = await calc_movers(session, "Min5", ALL_SYMBOLS)
+        
+        # LƯU CACHE cho các lệnh thủ công
+        global CACHED_MOVERS, LAST_SCAN_TIME
+        CACHED_MOVERS = movers
+        LAST_SCAN_TIME = datetime.now()
     
     if not movers:
         return
@@ -453,8 +490,8 @@ def main():
     app.add_handler(CommandHandler("coinlist", coinlist))
 
     jq = app.job_queue
-    # Quét pump/dump mỗi 30 giây (nhanh hơn)
-    jq.run_repeating(job_scan_pumps_dumps, 30, first=10)
+    # Quét pump/dump mỗi 30 giây (nhanh hơn) - cho phép 2 instances chạy song song
+    jq.run_repeating(job_scan_pumps_dumps, 30, first=10, job_kwargs={'max_instances': 2})
     # Kiểm tra coin mới mỗi 5 phút
     jq.run_repeating(job_new_listing, 300, first=30)
 
