@@ -255,8 +255,8 @@ def main():
     app.add_handler(CommandHandler("top10", top10))
 
     jq = app.job_queue
-    # Quét pump/dump mỗi 2 phút
-    jq.run_repeating(job_scan_pumps_dumps, 120, first=10)
+    # Quét pump/dump mỗi 30 giây (nhanh hơn)
+    jq.run_repeating(job_scan_pumps_dumps, 30, first=10)
     # Kiểm tra coin mới mỗi 5 phút
     jq.run_repeating(job_new_listing, 300, first=30)
 
