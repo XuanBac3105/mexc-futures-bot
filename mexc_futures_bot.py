@@ -20,8 +20,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 FUTURES_BASE = "https://contract.mexc.co"
 
 # Ngưỡng để báo động (%)
-PUMP_THRESHOLD = 3.0    # Tăng >= 3% trong 5 phút
-DUMP_THRESHOLD = -3.0   # Giảm >= 3% trong 5 phút
+PUMP_THRESHOLD = 2.0    # Tăng >= 2% trong 1 phút
+DUMP_THRESHOLD = -2.0   # Giảm >= 2% trong 1 phút
 
 # Volume tối thiểu để tránh coin ít thanh khoản
 MIN_VOL_THRESHOLD = 100000
@@ -121,8 +121,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/subscribe – bật báo động\n"
         "/unsubscribe – tắt báo động\n"
         "/top10 – xem top 10 gainers + losers\n"
-        "/gainers5 – top 10 coin tăng mạnh nhất 5 phút\n"
-        "/losers5 – top 10 coin giảm mạnh nhất 5 phút\n"
+        "/gainers5 – top 10 coin tăng mạnh nhất 1 phút\n"
+        "/losers5 – top 10 coin giảm mạnh nhất 1 phút\n"
         "/timelist – lịch coin sắp list trong 1 tuần\n"
         "/coinlist – coin đã list trong 1 tuần qua"
     )
@@ -195,7 +195,7 @@ async def top10(update, context):
         await update.message.reply_text("⏳ Đang quét tất cả coin...")
         async with aiohttp.ClientSession() as session:
             symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min5", symbols)
+            movers = await calc_movers(session, "Min1", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -207,12 +207,12 @@ async def top10(update, context):
     top_g = sorted(movers, key=lambda x: x[1], reverse=True)[:10]
     top_l = sorted(movers, key=lambda x: x[1])[:10]
     
-    msg_g = "🚀 *TOP 10 GAINERS (5 phút)*\n"
+    msg_g = "🚀 *TOP 10 GAINERS (1 phút)*\n"
     for i, (sym, chg, old, new, vol) in enumerate(top_g, 1):
         coin = sym.replace("_USDT", "")
         msg_g += f"{i}. `{coin}` {chg:+.2f}%\n"
     
-    msg_l = "\n💥 *TOP 10 LOSERS (5 phút)*\n"
+    msg_l = "\n💥 *TOP 10 LOSERS (1 phút)*\n"
     for i, (sym, chg, old, new, vol) in enumerate(top_l, 1):
         coin = sym.replace("_USDT", "")
         msg_l += f"{i}. `{coin}` {chg:+.2f}%\n"
@@ -233,7 +233,7 @@ async def gainers5(update, context):
         await update.message.reply_text("⏳ Đang quét...")
         async with aiohttp.ClientSession() as session:
             symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min5", symbols)
+            movers = await calc_movers(session, "Min1", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -243,7 +243,7 @@ async def gainers5(update, context):
     movers = [(s, c, o, n, v) for s, c, o, n, v in movers if v >= MIN_VOL_THRESHOLD]
     top_g = sorted(movers, key=lambda x: x[1], reverse=True)[:10]
     
-    msg = "🚀 *TOP 10 GAINERS (5 phút)*\n\n"
+    msg = "🚀 *TOP 10 GAINERS (1 phút)*\n\n"
     for i, (sym, chg, old, new, vol) in enumerate(top_g, 1):
         coin = sym.replace("_USDT", "")
         msg += f"{i}. `{coin}` {chg:+.2f}% ({old:.6g} → {new:.6g})\n"
@@ -264,7 +264,7 @@ async def losers5(update, context):
         await update.message.reply_text("⏳ Đang quét...")
         async with aiohttp.ClientSession() as session:
             symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min5", symbols)
+            movers = await calc_movers(session, "Min1", symbols)
     
     if not movers:
         await update.message.reply_text("❌ Không lấy được dữ liệu")
@@ -274,7 +274,7 @@ async def losers5(update, context):
     movers = [(s, c, o, n, v) for s, c, o, n, v in movers if v >= MIN_VOL_THRESHOLD]
     top_l = sorted(movers, key=lambda x: x[1])[:10]
     
-    msg = "💥 *TOP 10 LOSERS (5 phút)*\n\n"
+    msg = "💥 *TOP 10 LOSERS (1 phút)*\n\n"
     for i, (sym, chg, old, new, vol) in enumerate(top_l, 1):
         coin = sym.replace("_USDT", "")
         msg += f"{i}. `{coin}` {chg:+.2f}% ({old:.6g} → {new:.6g})\n"
@@ -424,7 +424,7 @@ async def job_scan_pumps_dumps(context):
             print(f"✅ Tìm thấy {len(ALL_SYMBOLS)} coin")
         
         # Tính movers cho tất cả coin
-        movers = await calc_movers(session, "Min5", ALL_SYMBOLS)
+        movers = await calc_movers(session, "Min1", ALL_SYMBOLS)
         
         # LƯU CACHE cho các lệnh thủ công
         global CACHED_MOVERS, LAST_SCAN_TIME
@@ -520,8 +520,8 @@ async def post_init(app):
         BotCommand("subscribe", "Bật thông báo pump/dump tự động"),
         BotCommand("unsubscribe", "Tắt thông báo tự động"),
         BotCommand("top10", "Top 10 coin tăng/giảm mạnh nhất"),
-        BotCommand("gainers5", "Top 10 coin tăng mạnh nhất 5 phút"),
-        BotCommand("losers5", "Top 10 coin giảm mạnh nhất 5 phút"),
+        BotCommand("gainers5", "Top 10 coin tăng mạnh nhất 1 phút"),
+        BotCommand("losers5", "Top 10 coin giảm mạnh nhất 1 phút"),
         BotCommand("timelist", "Lịch coin sắp list trong 1 tuần"),
         BotCommand("coinlist", "Coin đã list trong 1 tuần qua"),
     ]
