@@ -461,7 +461,12 @@ async def job_scan_pumps_dumps(context):
         
         for chat in SUBSCRIBERS:
             try:
-                await context.bot.send_message(chat, text, parse_mode="Markdown")
+                await context.bot.send_message(
+                    chat, 
+                    text, 
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True  # Tắt preview link
+                )
             except Exception as e:
                 print(f"❌ Lỗi gửi tin nhắn: {e}")
 
