@@ -22,7 +22,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FUTURES_BASE = "https://contract.mexc.co"
-WEBSOCKET_URL = "wss://contract.mexc.com/ws"  # WebSocket endpoint
+WEBSOCKET_URL = "wss://contract.mexc.com/edge"  # MEXC Futures WebSocket endpoint
 
 # Ngưỡng để báo động (%)
 PUMP_THRESHOLD = 2.0    # Tăng >= 2% trong 1 phút
@@ -155,18 +155,23 @@ async def unsubscribe(update, context):
 
 
 async def websocket_stream(context):
-    """WebSocket stream để nhận giá realtime từ MEXC"""
+    """WebSocket stream để nhận giá realtime từ MEXC Futures"""
     while True:
         try:
             async with websockets.connect(WEBSOCKET_URL) as ws:
-                # Subscribe tất cả ticker streams
+                print(f"✅ Kết nối WebSocket thành công")
+                
+                # Subscribe tất cả ticker streams - MEXC Futures format
                 for symbol in ALL_SYMBOLS:
+                    # MEXC Futures WebSocket format: sub.ticker
                     sub_msg = {
                         "method": "sub.ticker",
-                        "param": {"symbol": symbol}
+                        "param": {
+                            "symbol": symbol
+                        }
                     }
                     await ws.send(json.dumps(sub_msg))
-                    await asyncio.sleep(0.01)  # Throttle subscriptions
+                    await asyncio.sleep(0.005)  # 5ms delay giữa subscriptions
                 
                 print(f"✅ Đã subscribe {len(ALL_SYMBOLS)} coin qua WebSocket")
                 
@@ -175,14 +180,15 @@ async def websocket_stream(context):
                     try:
                         data = json.loads(message)
                         
-                        # Bỏ qua ping/pong
+                        # Xử lý ping/pong
                         if "ping" in data:
                             await ws.send(json.dumps({"pong": data["ping"]}))
                             continue
                         
                         # Xử lý ticker data
-                        if "data" in data and "symbol" in data["data"]:
-                            await process_ticker(data["data"], context)
+                        if "channel" in data and data.get("channel") == "push.ticker":
+                            if "data" in data:
+                                await process_ticker(data["data"], context)
                             
                     except json.JSONDecodeError:
                         continue
