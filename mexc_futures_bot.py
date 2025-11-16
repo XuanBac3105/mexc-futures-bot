@@ -29,8 +29,6 @@ MIN_VOL_THRESHOLD = 100000
 SUBSCRIBERS = set()
 KNOWN_SYMBOLS = set()  # Danh sách coin đã biết
 ALL_SYMBOLS = []  # Cache danh sách coin
-CACHED_MOVERS = []  # Cache kết quả quét mới nhất
-LAST_SCAN_TIME = None  # Thời gian quét lần cuối
 
 
 # ================== UTIL ==================
@@ -121,17 +119,15 @@ def fmt_alert(symbol, old_price, new_price, change_pct):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     SUBSCRIBERS.add(update.effective_chat.id)
     await update.message.reply_text(
-        "🤖 Bot Quét MEXC Futures đã sẵn sàng!\n\n"
-        "Bot sẽ tự động quét TẤT CẢ coin trên MEXC Futures\n"
-        "và báo ngay khi có biến động mạnh (±5%)\n\n"
+        "🤖 Bot Quét MEXC Futures - Báo Động Realtime!\n\n"
+        "✅ Quét 722 coin Futures LIÊN TỤC\n"
+        "✅ Báo NGAY khi biến động ≥±2%\n"
+        "✅ So sánh giá REALTIME vs candle M1\n\n"
         "Các lệnh:\n"
         "/subscribe – bật báo động\n"
         "/unsubscribe – tắt báo động\n"
-        "/top10 – xem top 10 gainers + losers\n"
-        "/gainers5 – top 10 coin tăng mạnh nhất 1 phút\n"
-        "/losers5 – top 10 coin giảm mạnh nhất 1 phút\n"
-        "/timelist – lịch coin sắp list trong 1 tuần\n"
-        "/coinlist – coin đã list trong 1 tuần qua"
+        "/timelist – lịch coin sắp list\n"
+        "/coinlist – coin vừa list gần đây"
     )
 
 
@@ -193,106 +189,6 @@ async def calc_movers(session, interval, symbols):
             await asyncio.sleep(delay)
     
     return all_movers
-
-
-async def top10(update, context):
-    """Lệnh xem top 10 gainers và losers"""
-    global CACHED_MOVERS, LAST_SCAN_TIME
-    
-    # Dùng cache nếu có (data mới nhất từ job tự động)
-    if CACHED_MOVERS:
-        movers = CACHED_MOVERS
-        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
-        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
-    else:
-        await update.message.reply_text("⏳ Đang quét tất cả coin...")
-        async with aiohttp.ClientSession() as session:
-            symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min1", symbols)
-    
-    if not movers:
-        await update.message.reply_text("❌ Không lấy được dữ liệu")
-        return
-    
-    # Lọc coin có volume đủ lớn
-    movers = [(s, c, o, n, v) for s, c, o, n, v in movers if v >= MIN_VOL_THRESHOLD]
-    
-    top_g = sorted(movers, key=lambda x: x[1], reverse=True)[:10]
-    top_l = sorted(movers, key=lambda x: x[1])[:10]
-    
-    msg_g = "🚀 *TOP 10 GAINERS (1 phút)*\n"
-    for i, (sym, chg, old, new, vol) in enumerate(top_g, 1):
-        coin = sym.replace("_USDT", "")
-        msg_g += f"{i}. `{coin}` {chg:+.2f}%\n"
-    
-    msg_l = "\n💥 *TOP 10 LOSERS (1 phút)*\n"
-    for i, (sym, chg, old, new, vol) in enumerate(top_l, 1):
-        coin = sym.replace("_USDT", "")
-        msg_l += f"{i}. `{coin}` {chg:+.2f}%\n"
-    
-    await update.message.reply_text(msg_g + msg_l, parse_mode="Markdown")
-
-
-async def gainers5(update, context):
-    """Lệnh xem top 10 gainers"""
-    global CACHED_MOVERS, LAST_SCAN_TIME
-    
-    # Dùng cache nếu có
-    if CACHED_MOVERS:
-        movers = CACHED_MOVERS
-        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
-        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
-    else:
-        await update.message.reply_text("⏳ Đang quét...")
-        async with aiohttp.ClientSession() as session:
-            symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min1", symbols)
-    
-    if not movers:
-        await update.message.reply_text("❌ Không lấy được dữ liệu")
-        return
-    
-    # Lọc coin có volume đủ lớn
-    movers = [(s, c, o, n, v) for s, c, o, n, v in movers if v >= MIN_VOL_THRESHOLD]
-    top_g = sorted(movers, key=lambda x: x[1], reverse=True)[:10]
-    
-    msg = "🚀 *TOP 10 GAINERS (1 phút)*\n\n"
-    for i, (sym, chg, old, new, vol) in enumerate(top_g, 1):
-        coin = sym.replace("_USDT", "")
-        msg += f"{i}. `{coin}` {chg:+.2f}% ({old:.6g} → {new:.6g})\n"
-    
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-
-async def losers5(update, context):
-    """Lệnh xem top 10 losers"""
-    global CACHED_MOVERS, LAST_SCAN_TIME
-    
-    # Dùng cache nếu có
-    if CACHED_MOVERS:
-        movers = CACHED_MOVERS
-        time_ago = (datetime.now() - LAST_SCAN_TIME).seconds if LAST_SCAN_TIME else 0
-        await update.message.reply_text(f"📊 Dữ liệu {time_ago}s trước...")
-    else:
-        await update.message.reply_text("⏳ Đang quét...")
-        async with aiohttp.ClientSession() as session:
-            symbols = await get_all_symbols(session)
-            movers = await calc_movers(session, "Min1", symbols)
-    
-    if not movers:
-        await update.message.reply_text("❌ Không lấy được dữ liệu")
-        return
-    
-    # Lọc coin có volume đủ lớn
-    movers = [(s, c, o, n, v) for s, c, o, n, v in movers if v >= MIN_VOL_THRESHOLD]
-    top_l = sorted(movers, key=lambda x: x[1])[:10]
-    
-    msg = "💥 *TOP 10 LOSERS (1 phút)*\n\n"
-    for i, (sym, chg, old, new, vol) in enumerate(top_l, 1):
-        coin = sym.replace("_USDT", "")
-        msg += f"{i}. `{coin}` {chg:+.2f}% ({old:.6g} → {new:.6g})\n"
-    
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def timelist(update, context):
@@ -438,11 +334,6 @@ async def job_scan_pumps_dumps(context):
         
         # Tính movers cho tất cả coin
         movers = await calc_movers(session, "Min1", ALL_SYMBOLS)
-        
-        # LƯU CACHE cho các lệnh thủ công
-        global CACHED_MOVERS, LAST_SCAN_TIME
-        CACHED_MOVERS = movers
-        LAST_SCAN_TIME = datetime.now()
     
     if not movers:
         return
@@ -532,9 +423,6 @@ async def post_init(app):
         BotCommand("start", "Khởi động bot và xem hướng dẫn"),
         BotCommand("subscribe", "Bật thông báo pump/dump tự động"),
         BotCommand("unsubscribe", "Tắt thông báo tự động"),
-        BotCommand("top10", "Top 10 coin tăng/giảm mạnh nhất"),
-        BotCommand("gainers5", "Top 10 coin tăng mạnh nhất 1 phút"),
-        BotCommand("losers5", "Top 10 coin giảm mạnh nhất 1 phút"),
         BotCommand("timelist", "Lịch coin sắp list trong 1 tuần"),
         BotCommand("coinlist", "Coin đã list trong 1 tuần qua"),
     ]
@@ -549,9 +437,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
-    app.add_handler(CommandHandler("top10", top10))
-    app.add_handler(CommandHandler("gainers5", gainers5))
-    app.add_handler(CommandHandler("losers5", losers5))
     app.add_handler(CommandHandler("timelist", timelist))
     app.add_handler(CommandHandler("coinlist", coinlist))
 
