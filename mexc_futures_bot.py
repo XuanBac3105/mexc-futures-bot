@@ -33,6 +33,7 @@ MIN_VOL_THRESHOLD = 100000
 
 SUBSCRIBERS = set()
 ALERT_MODE = {}  # {chat_id: mode} - 1: tất cả, 2: chỉ biến động mạnh ≥3%
+MUTED_COINS = {}  # {chat_id: set(symbols)} - danh sách coin bị mute
 KNOWN_SYMBOLS = set()  # Danh sách coin đã biết
 ALL_SYMBOLS = []  # Cache danh sách coin
 
@@ -166,6 +167,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/unsubscribe – tắt báo động\n"
         "/mode1 – báo tất cả (≥2.5%)\n"
         "/mode2 – chỉ báo biến động mạnh (≥3%)\n"
+        "/mute COIN – tắt thông báo coin\n"
+        "/unmute COIN – bật lại thông báo coin\n"
+        "/mutelist – xem danh sách coin đã mute\n"
         "/timelist – lịch coin sắp list\n"
         "/coinlist – coin vừa list gần đây"
     )
@@ -202,6 +206,61 @@ async def mode2(update, context):
         "  ⚡ Biến động mạnh (3-3.9%)\n"
         "  🔥 Biến động cực mạnh (≥4%)"
     )
+
+
+async def mute_coin(update, context):
+    chat_id = update.effective_chat.id
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Vui lòng nhập tên coin\n\n"
+            "Ví dụ: /mute XION hoặc /mute xion"
+        )
+        return
+    
+    coin = context.args[0].upper().strip()  # Tự động chuyển thành chữ hoa
+    symbol = f"{coin}_USDT" if not coin.endswith("_USDT") else coin
+    
+    if chat_id not in MUTED_COINS:
+        MUTED_COINS[chat_id] = set()
+    
+    MUTED_COINS[chat_id].add(symbol)
+    await update.message.reply_text(f"🔇 Đã tắt thông báo cho `{coin}`", parse_mode="Markdown")
+
+
+async def unmute_coin(update, context):
+    chat_id = update.effective_chat.id
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Vui lòng nhập tên coin\n\n"
+            "Ví dụ: /unmute XION hoặc /unmute xion"
+        )
+        return
+    
+    coin = context.args[0].upper().strip()  # Tự động chuyển thành chữ hoa
+    symbol = f"{coin}_USDT" if not coin.endswith("_USDT") else coin
+    
+    if chat_id in MUTED_COINS and symbol in MUTED_COINS[chat_id]:
+        MUTED_COINS[chat_id].remove(symbol)
+        await update.message.reply_text(f"🔔 Đã bật lại thông báo cho `{coin}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"ℹ️ `{coin}` chưa bị mute", parse_mode="Markdown")
+
+
+async def mutelist(update, context):
+    chat_id = update.effective_chat.id
+    
+    if chat_id not in MUTED_COINS or not MUTED_COINS[chat_id]:
+        await update.message.reply_text("ℹ️ Chưa có coin nào bị mute")
+        return
+    
+    coins = [sym.replace("_USDT", "") for sym in MUTED_COINS[chat_id]]
+    msg = "🔇 *DANH SÁCH COIN ĐÃ MUTE*\n\n"
+    msg += "\n".join([f"• `{coin}`" for coin in sorted(coins)])
+    msg += f"\n\n_Tổng: {len(coins)} coin_"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def websocket_stream(context):
@@ -322,6 +381,10 @@ async def process_ticker(ticker_data, context):
             # Gửi alert theo ALERT_MODE của từng user
             tasks = []
             for chat in SUBSCRIBERS:
+                # Kiểm tra coin có bị mute không
+                if chat in MUTED_COINS and symbol in MUTED_COINS[chat]:
+                    continue
+                
                 mode = ALERT_MODE.get(chat, 1)  # Mặc định mode 1
 
                 # Mode 1: Báo tất cả >= 2.5%
@@ -665,6 +728,9 @@ async def post_init(app):
         BotCommand("unsubscribe", "Tắt thông báo tự động"),
         BotCommand("mode1", "Báo tất cả (≥2.5%)"),
         BotCommand("mode2", "Chỉ báo biến động mạnh (≥3%)"),
+        BotCommand("mute", "Tắt thông báo coin (ví dụ: /mute XION)"),
+        BotCommand("unmute", "Bật lại thông báo coin"),
+        BotCommand("mutelist", "Xem danh sách coin đã mute"),
         BotCommand("timelist", "Lịch coin sắp list trong 1 tuần"),
         BotCommand("coinlist", "Coin đã list trong 1 tuần qua"),
     ]
@@ -701,6 +767,9 @@ def main():
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CommandHandler("mode1", mode1))
     app.add_handler(CommandHandler("mode2", mode2))
+    app.add_handler(CommandHandler("mute", mute_coin))
+    app.add_handler(CommandHandler("unmute", unmute_coin))
+    app.add_handler(CommandHandler("mutelist", mutelist))
     app.add_handler(CommandHandler("timelist", timelist))
     app.add_handler(CommandHandler("coinlist", coinlist))
 
