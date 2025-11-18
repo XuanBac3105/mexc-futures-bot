@@ -266,6 +266,7 @@ async def mutelist(update, context):
 async def websocket_stream(context):
     """WebSocket stream để nhận giá realtime từ MEXC Futures"""
     reconnect_delay = 5
+    subscribed_symbols = set()  # Track những coin đã subscribe
     
     while True:
         try:
@@ -288,6 +289,7 @@ async def websocket_stream(context):
                         }
                     }
                     await ws.send(json.dumps(sub_msg))
+                    subscribed_symbols.add(symbol)
                     await asyncio.sleep(0.005)  # 5ms delay giữa subscriptions
                 
                 print(f"✅ Đã subscribe {len(ALL_SYMBOLS)} coin qua WebSocket")
@@ -304,6 +306,25 @@ async def websocket_stream(context):
                         if "ping" in data:
                             await ws.send(json.dumps({"pong": data["ping"]}))
                             continue
+                        
+                        # Kiểm tra coin mới và subscribe (mỗi 30s kiểm tra 1 lần)
+                        if not hasattr(websocket_stream, 'last_check'):
+                            websocket_stream.last_check = datetime.now()
+                        
+                        if (datetime.now() - websocket_stream.last_check).seconds >= 30:
+                            new_symbols = set(ALL_SYMBOLS) - subscribed_symbols
+                            if new_symbols:
+                                print(f"🔄 Phát hiện {len(new_symbols)} coin mới, đang subscribe...")
+                                for symbol in new_symbols:
+                                    sub_msg = {
+                                        "method": "sub.ticker",
+                                        "param": {"symbol": symbol}
+                                    }
+                                    await ws.send(json.dumps(sub_msg))
+                                    subscribed_symbols.add(symbol)
+                                    await asyncio.sleep(0.005)
+                                print(f"✅ Đã subscribe {len(new_symbols)} coin mới")
+                            websocket_stream.last_check = datetime.now()
                         
                         # Xử lý ticker data
                         if "channel" in data and data.get("channel") == "push.ticker":
@@ -689,7 +710,7 @@ async def job_new_listing(context):
         except:
             return
     
-    global KNOWN_SYMBOLS
+    global KNOWN_SYMBOLS, ALL_SYMBOLS
     
     # Lần đầu chạy: lưu danh sách hiện tại
     if not KNOWN_SYMBOLS:
@@ -707,6 +728,10 @@ async def job_new_listing(context):
             coin = sym.replace("_USDT", "")
             alerts.append(f"🆕 *COIN MỚI LIST:* `{coin}`")
             print(f"🆕 NEW LISTING: {sym}")
+        
+        # CẬP NHẬT ALL_SYMBOLS để WebSocket subscribe coin mới
+        ALL_SYMBOLS = symbols
+        print(f"🔄 Đã cập nhật danh sách: {len(ALL_SYMBOLS)} coin (thêm {len(new_coins)} coin mới)")
         
         # Gửi thông báo
         text = "\n".join(alerts)
