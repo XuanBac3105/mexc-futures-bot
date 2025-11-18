@@ -20,6 +20,8 @@ load_dotenv()
 
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # ID của channel (ví dụ: -1001234567890 hoặc @channel_name)
+ADMIN_IDS = set(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else set()  # Admin user IDs
 
 FUTURES_BASE = "https://contract.mexc.co"
 WEBSOCKET_URL = "wss://contract.mexc.com/edge"  # MEXC Futures WebSocket endpoint
@@ -31,7 +33,7 @@ DUMP_THRESHOLD = -2.5   # Giảm >= 2.5%
 # Volume tối thiểu để tránh coin ít thanh khoản
 MIN_VOL_THRESHOLD = 100000
 
-SUBSCRIBERS = set()
+SUBSCRIBERS = set()  # User IDs (cho private chat)
 ALERT_MODE = {}  # {chat_id: mode} - 1: tất cả, 2: chỉ biến động mạnh ≥3%
 MUTED_COINS = {}  # {chat_id: set(symbols)} - danh sách coin bị mute
 KNOWN_SYMBOLS = set()  # Danh sách coin đã biết
@@ -149,6 +151,29 @@ def fmt_alert(symbol, old_price, new_price, change_pct):
     )
 
 
+# ================== ADMIN CHECK ==================
+def admin_only(func):
+    """Decorator để giới hạn command chỉ cho admin"""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        
+        # Nếu không set ADMIN_IDS → cho phép tất cả (backward compatibility)
+        if not ADMIN_IDS:
+            return await func(update, context)
+        
+        # Nếu không phải admin → từ chối
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text(
+                "⛔ Lệnh này chỉ dành cho admin.\n\n"
+                "Bạn có thể xem alert trong channel!"
+            )
+            return
+        
+        return await func(update, context)
+    
+    return wrapper
+
+
 # ================== COMMANDS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -178,16 +203,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@admin_only
 async def subscribe(update, context):
     SUBSCRIBERS.add(update.effective_chat.id)
     await update.message.reply_text("Đã bật báo!")
 
 
+@admin_only
 async def unsubscribe(update, context):
     SUBSCRIBERS.discard(update.effective_chat.id)
     await update.message.reply_text("Đã tắt báo!")
 
 
+@admin_only
 async def mode1(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 1
@@ -200,6 +228,7 @@ async def mode1(update, context):
     )
 
 
+@admin_only
 async def mode2(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 2
@@ -211,6 +240,7 @@ async def mode2(update, context):
     )
 
 
+@admin_only
 async def mute_coin(update, context):
     chat_id = update.effective_chat.id
     
@@ -231,6 +261,7 @@ async def mute_coin(update, context):
     await update.message.reply_text(f"🔇 Đã tắt thông báo cho `{coin}`", parse_mode="Markdown")
 
 
+@admin_only
 async def unmute_coin(update, context):
     chat_id = update.effective_chat.id
     
@@ -251,6 +282,7 @@ async def unmute_coin(update, context):
         await update.message.reply_text(f"ℹ️ `{coin}` chưa bị mute", parse_mode="Markdown")
 
 
+@admin_only
 async def mutelist(update, context):
     chat_id = update.effective_chat.id
     
@@ -381,8 +413,21 @@ async def process_ticker(ticker_data, context):
             # Reset base price SAU KHI alert (dynamic reset)
             BASE_PRICES[symbol] = current_price
 
-            # Gửi alert theo ALERT_MODE của từng user
+            # Gửi alert
             tasks = []
+            
+            # Nếu có CHANNEL_ID → gửi vào channel
+            if CHANNEL_ID:
+                tasks.append(
+                    context.bot.send_message(
+                        CHANNEL_ID,
+                        msg,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+                )
+            
+            # Gửi cho subscribers cá nhân (nếu có)
             for chat in SUBSCRIBERS:
                 # Kiểm tra coin có bị mute không
                 if chat in MUTED_COINS and symbol in MUTED_COINS[chat]:
@@ -715,6 +760,15 @@ async def job_new_listing(context):
         
         # Gửi thông báo
         text = "\n".join(alerts)
+        
+        # Gửi vào channel nếu có
+        if CHANNEL_ID:
+            try:
+                await context.bot.send_message(CHANNEL_ID, text, parse_mode="Markdown")
+            except Exception as e:
+                print(f"❌ Lỗi gửi thông báo coin mới vào channel: {e}")
+        
+        # Gửi cho subscribers cá nhân
         for chat in SUBSCRIBERS:
             try:
                 await context.bot.send_message(chat, text, parse_mode="Markdown")
@@ -795,8 +849,17 @@ async def restart_bot(context):
     
     print(f"🔄 BOT ĐANG RESTART: {reason}")
     
-    # Gửi thông báo cho users
+    # Gửi thông báo cho channel và users
     msg = f"🔄 *Bot đang khởi động lại*\n\n_{reason}_"
+    
+    # Gửi vào channel
+    if CHANNEL_ID:
+        try:
+            await context.bot.send_message(CHANNEL_ID, msg, parse_mode="Markdown")
+        except:
+            pass
+    
+    # Gửi cho subscribers
     for chat in SUBSCRIBERS:
         try:
             await context.bot.send_message(chat, msg, parse_mode="Markdown")
