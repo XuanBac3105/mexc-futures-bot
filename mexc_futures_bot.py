@@ -42,6 +42,9 @@ LAST_PRICES = {}  # {symbol: {"price": float, "time": datetime}}
 BASE_PRICES = {}  # {symbol: base_price} - Dynamic reset: chỉ reset sau khi alert
 ALERTED_SYMBOLS = {}  # {symbol: timestamp} - tránh spam alert
 
+# Scheduled restart tracking
+SCHEDULED_RESTARTS = set()  # Set of timestamps đã schedule restart
+
 
 # ================== UTIL ==================
 async def fetch_json(session, url, params=None, retry=3):
@@ -529,8 +532,9 @@ async def timelist(update, context):
                     if not timestamp_ms:
                         continue
                     
-                    # Convert timestamp to datetime
-                    dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=vn_tz)
+                    # Convert timestamp to datetime - API trả UTC, convert sang VN
+                    dt_utc = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC)
+                    dt = dt_utc.astimezone(vn_tz)
                     
                     # Chỉ hiển thị coin list trong 1 tuần tới
                     if now <= dt <= one_week_later:
@@ -592,8 +596,9 @@ async def coinlist(update, context):
                     if not timestamp_ms:
                         continue
                     
-                    # Convert timestamp to datetime
-                    dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=vn_tz)
+                    # Convert timestamp to datetime - API trả UTC, convert sang VN
+                    dt_utc = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC)
+                    dt = dt_utc.astimezone(vn_tz)
                     
                     # Chỉ hiển thị coin list trong 1 tuần qua
                     if one_week_ago <= dt <= now:
@@ -717,6 +722,96 @@ async def job_new_listing(context):
                 print(f"❌ Lỗi gửi thông báo coin mới: {e}")
 
 
+async def job_schedule_restarts(context):
+    """Job lên lịch restart bot khi có coin mới list"""
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Gọi API calendar để lấy lịch listing
+            timestamp = int(datetime.now().timestamp() * 1000)
+            url = f"https://www.mexc.co/api/operation/new_coin_calendar?timestamp={timestamp}"
+            
+            async with session.get(url, timeout=15) as r:
+                if r.status != 200:
+                    return
+                
+                data = await r.json()
+                coins = data.get('data', {}).get('newCoins', [])
+                
+                if not coins:
+                    return
+                
+                vn_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+                now = datetime.now(vn_tz)
+                next_24h = now + timedelta(hours=24)
+                
+                for coin in coins:
+                    timestamp_ms = coin.get('firstOpenTime')
+                    if not timestamp_ms:
+                        continue
+                    
+                    # Convert timestamp sang giờ VN
+                    dt_utc = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC)
+                    list_time = dt_utc.astimezone(vn_tz)
+                    
+                    # Chỉ schedule cho coin list trong 24h tới
+                    if now <= list_time <= next_24h:
+                        # Tránh schedule trùng
+                        if timestamp_ms in SCHEDULED_RESTARTS:
+                            continue
+                        
+                        SCHEDULED_RESTARTS.add(timestamp_ms)
+                        
+                        # Tính thời gian chờ
+                        wait_seconds = (list_time - now).total_seconds()
+                        wait_seconds_plus_1h = wait_seconds + 3600  # +1 tiếng
+                        
+                        if wait_seconds > 0:
+                            coin_name = coin.get('vcoinName', 'Unknown')
+                            print(f"📅 Đã lên lịch restart cho {coin_name}:")
+                            print(f"   - Restart 1: {list_time.strftime('%d/%m %H:%M')} ({wait_seconds/60:.0f} phút)")
+                            print(f"   - Restart 2: {(list_time + timedelta(hours=1)).strftime('%d/%m %H:%M')} (sau 1h)")
+                            
+                            # Schedule restart lần 1 (đúng giờ list)
+                            context.job_queue.run_once(
+                                restart_bot,
+                                wait_seconds,
+                                data={"reason": f"Coin mới list: {coin_name}"}
+                            )
+                            
+                            # Schedule restart lần 2 (sau 1 tiếng)
+                            context.job_queue.run_once(
+                                restart_bot,
+                                wait_seconds_plus_1h,
+                                data={"reason": f"Restart lần 2 sau khi {coin_name} list"}
+                            )
+        
+        except Exception as e:
+            print(f"❌ Lỗi schedule restart: {e}")
+
+
+async def restart_bot(context):
+    """Restart bot để load coin mới"""
+    reason = context.job.data.get("reason", "Scheduled restart")
+    
+    print(f"🔄 BOT ĐANG RESTART: {reason}")
+    
+    # Gửi thông báo cho users
+    msg = f"🔄 *Bot đang khởi động lại*\n\n_{reason}_"
+    for chat in SUBSCRIBERS:
+        try:
+            await context.bot.send_message(chat, msg, parse_mode="Markdown")
+        except:
+            pass
+    
+    # Đợi 2 giây để gửi hết tin nhắn
+    await asyncio.sleep(2)
+    
+    # Restart bot bằng cách raise exception để Railway restart container
+    import sys
+    print("🔄 Exiting for restart...")
+    sys.exit(0)
+
+
 # ================== MAIN ==================
 async def post_init(app):
     """Set bot commands menu"""
@@ -793,12 +888,16 @@ def main():
     
     # Kiểm tra coin mới mỗi 5 phút
     jq.run_repeating(job_new_listing, 300, first=30)
+    
+    # Schedule restart cho coin mới list (chạy mỗi 30 phút để cập nhật lịch)
+    jq.run_repeating(job_schedule_restarts, 1800, first=60)
 
     print("🔥 Bot quét MEXC Futures...")
     print(f"📊 Ngưỡng pump: >= {PUMP_THRESHOLD}%")
     print(f"📊 Ngưỡng dump: <= {DUMP_THRESHOLD}%")
     print(f"💰 Volume tối thiểu: {MIN_VOL_THRESHOLD:,}")
     print("🌐 WebSocket: Realtime price streaming")
+    print("📅 Auto-restart khi có coin mới list")
     
     # Chạy với graceful shutdown
     try:
