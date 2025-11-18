@@ -141,13 +141,13 @@ def fmt_alert(symbol, old_price, new_price, change_pct):
     # Lấy tên coin (bỏ _USDT)
     coin_name = symbol.replace("_USDT", "")
     
-    # Link đơn giản hơn để MEXC app dễ detect
+    # Link ẩn để không hiển thị URL
     link = f"https://www.mexc.co/futures/{symbol}"
     
     return (
         f"{highlight}"
-        f"┌{icon} *[{coin_name}]({link})* ⚡ {size_tag} {color}\n"
-        f"└ `{old_price:.6g}` → `{new_price:.6g}`"
+        f"┌{icon} [{coin_name}]({link}) ⚡ {size_tag} {color}\n"
+        f"└ {old_price:.6g} → {new_price:.6g}"
     )
 
 
