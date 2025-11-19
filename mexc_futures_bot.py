@@ -486,12 +486,14 @@ async def process_ticker(ticker_data, context):
         should_alert = False
         if (price_change >= PUMP_THRESHOLD or price_change <= DUMP_THRESHOLD):
             last_alert = ALERTED_SYMBOLS.get(symbol)
-            last_max = MAX_CHANGES[symbol].get("last_alerted_pct", None)
+            last_max = MAX_CHANGES[symbol].get("last_alerted_pct")
             # Báo ngay lần đầu vượt ngưỡng
             if last_alert is None:
                 should_alert = True
             else:
                 # Nếu đã báo rồi, chỉ báo lại khi tăng thêm >=1.5%
+                if last_max is None:
+                    last_max = 0.0
                 if abs_change >= abs(last_max) + 1.5:
                     should_alert = True
             if should_alert:
