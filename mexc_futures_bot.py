@@ -475,7 +475,7 @@ async def process_ticker(ticker_data, context):
             should_reset_base = True
         elif symbol in LAST_SIGNIFICANT_CHANGE:
             time_since_last = (now - LAST_SIGNIFICANT_CHANGE[symbol]).total_seconds()
-            if time_since_last > 180:  # 3 phút không có biến động mạnh
+            if time_since_last > 50:  # 50 giây không có biến động mạnh
                 should_reset_base = True
         
         if should_reset_base and symbol in MAX_CHANGES:
