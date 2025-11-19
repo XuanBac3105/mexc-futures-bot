@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 from collections import defaultdict
+import pickle
+import os.path
 
 # Load biến môi trường từ file .env
 load_dotenv()
@@ -45,9 +47,53 @@ ALL_SYMBOLS = []  # Cache danh sách coin
 LAST_PRICES = {}  # {symbol: {"price": float, "time": datetime}}
 BASE_PRICES = {}  # {symbol: base_price} - Dynamic reset: chỉ reset sau khi alert
 ALERTED_SYMBOLS = {}  # {symbol: timestamp} - tránh spam alert
+MAX_CHANGES = {}  # {symbol: {"max_pct": float, "time": datetime}} - Track max % change trong đợt pump/dump
+LAST_SIGNIFICANT_CHANGE = {}  # {symbol: timestamp} - Lần cuối có biến động mạnh
 
 # Scheduled restart tracking
 SCHEDULED_RESTARTS = set()  # Set of timestamps đã schedule restart
+
+# File để lưu dữ liệu persist
+DATA_FILE = "bot_data.pkl"
+
+
+# ================== PERSISTENT DATA ==================
+def save_data():
+    """Lưu dữ liệu quan trọng vào file"""
+    data = {
+        "subscribers": SUBSCRIBERS,
+        "alert_mode": ALERT_MODE,
+        "muted_coins": MUTED_COINS,
+        "known_symbols": KNOWN_SYMBOLS
+    }
+    try:
+        with open(DATA_FILE, "wb") as f:
+            pickle.dump(data, f)
+        print(f"✅ Đã lưu dữ liệu: {len(SUBSCRIBERS)} subscribers")
+    except Exception as e:
+        print(f"⚠️ Lỗi lưu dữ liệu: {e}")
+
+
+def load_data():
+    """Tải dữ liệu từ file"""
+    global SUBSCRIBERS, ALERT_MODE, MUTED_COINS, KNOWN_SYMBOLS
+    
+    if not os.path.exists(DATA_FILE):
+        print("ℹ️ Chưa có dữ liệu lưu trữ")
+        return
+    
+    try:
+        with open(DATA_FILE, "rb") as f:
+            data = pickle.load(f)
+        
+        SUBSCRIBERS = data.get("subscribers", set())
+        ALERT_MODE = data.get("alert_mode", {})
+        MUTED_COINS = data.get("muted_coins", {})
+        KNOWN_SYMBOLS = data.get("known_symbols", set())
+        
+        print(f"✅ Đã tải dữ liệu: {len(SUBSCRIBERS)} subscribers, {len(KNOWN_SYMBOLS)} coins")
+    except Exception as e:
+        print(f"⚠️ Lỗi tải dữ liệu: {e}")
 
 
 # ================== UTIL ==================
@@ -129,12 +175,12 @@ def fmt_alert(symbol, old_price, new_price, change_pct):
     
     if abs_change >= 10.0:
         # Mức 2: BIẾN ĐỘNG CỰC MẠNH >= 10%
-        icon = "🔥🚀🔥🚀🔥" if change_pct >= 0 else "🔥💥🔥💥🔥"
-        highlight = "╔═══════════════════════════╗\n⚠️  BIẾN ĐỘNG CỰC MẠNH  ⚠️\n╚═══════════════════════════╝\n"
+        icon = "🚀🚀🚀" if change_pct >= 0 else "💥💥💥"
+        highlight = "⚠️BIẾN ĐỘNG CỰC MẠNH⚠️"
         size_tag = f"*{change_pct:+.2f}%*"  # Bold cho số %
     else:
         # Mức 1: Trung bình 3-9.9%
-        icon = "🔸🚀🔸🚀🔸" if change_pct >= 0 else "🔸💥🔸💥🔸"
+        icon = "🚀🚀" if change_pct >= 0 else "💥💥"
         highlight = ""
         size_tag = f"{change_pct:+.2f}%"
     
@@ -212,12 +258,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def subscribe(update, context):
     SUBSCRIBERS.add(update.effective_chat.id)
+    save_data()  # Lưu ngay sau khi subscribe
     await update.message.reply_text("Đã bật báo!")
 
 
 @admin_only
 async def unsubscribe(update, context):
     SUBSCRIBERS.discard(update.effective_chat.id)
+    save_data()  # Lưu sau khi unsubscribe
     await update.message.reply_text("Đã tắt báo!")
 
 
@@ -225,6 +273,7 @@ async def unsubscribe(update, context):
 async def mode1(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 1
+    save_data()  # Lưu sau khi đổi mode
     await update.message.reply_text(
         "✅ Đã chuyển sang Mode 1\n\n"
         "📊 Báo TẤT CẢ biến động:\n"
@@ -237,6 +286,7 @@ async def mode1(update, context):
 async def mode2(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 2
+    save_data()  # Lưu sau khi đổi mode
     await update.message.reply_text(
         "✅ Đã chuyển sang Mode 2\n\n"
         "📊 CHỊ báo biến động trung bình:\n"
@@ -248,6 +298,7 @@ async def mode2(update, context):
 async def mode3(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 3
+    save_data()  # Lưu sau khi đổi mode
     await update.message.reply_text(
         "✅ Đã chuyển sang Mode 3\n\n"
         "📊 CHỊ báo biến động CỰC MẠNH:\n"
@@ -273,6 +324,7 @@ async def mute_coin(update, context):
         MUTED_COINS[chat_id] = set()
     
     MUTED_COINS[chat_id].add(symbol)
+    save_data()  # Lưu sau khi mute
     await update.message.reply_text(f"🔇 Đã tắt thông báo cho `{coin}`", parse_mode="Markdown")
 
 
@@ -292,6 +344,7 @@ async def unmute_coin(update, context):
     
     if chat_id in MUTED_COINS and symbol in MUTED_COINS[chat_id]:
         MUTED_COINS[chat_id].remove(symbol)
+        save_data()  # Lưu sau khi unmute
         await update.message.reply_text(f"🔔 Đã bật lại thông báo cho `{coin}`", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"ℹ️ `{coin}` chưa bị mute", parse_mode="Markdown")
@@ -405,28 +458,73 @@ async def process_ticker(ticker_data, context):
         # Tính % thay đổi từ BASE_PRICE (dynamic - chỉ reset sau alert)
         base_price = BASE_PRICES[symbol]
         price_change = (current_price - base_price) / base_price * 100
+        abs_change = abs(price_change)
         
-        # Kiểm tra ngưỡng và cooldown
+        # Track max change trong đợt pump/dump
+        if symbol not in MAX_CHANGES:
+            MAX_CHANGES[symbol] = {"max_pct": 0, "time": now}
+        
+        # Cập nhật max change nếu vượt qua
+        if abs_change > abs(MAX_CHANGES[symbol]["max_pct"]):
+            MAX_CHANGES[symbol] = {"max_pct": price_change, "time": now}
+            LAST_SIGNIFICANT_CHANGE[symbol] = now
+        
+        # Kiểm tra xem có nên reset base price không
+        # Reset nếu: giá quay về gần base (< 1.5%) HOẶC đã qua 3 phút không có biến động mạnh
+        should_reset_base = False
+        if abs_change < 1.5:  # Giá đã quay về gần base price
+            should_reset_base = True
+        elif symbol in LAST_SIGNIFICANT_CHANGE:
+            time_since_last = (now - LAST_SIGNIFICANT_CHANGE[symbol]).total_seconds()
+            if time_since_last > 180:  # 3 phút không có biến động mạnh
+                should_reset_base = True
+        
+        if should_reset_base and symbol in MAX_CHANGES:
+            BASE_PRICES[symbol] = current_price
+            MAX_CHANGES[symbol] = {"max_pct": 0, "time": now}
+        
+        # Kiểm tra ngưỡng và cooldown - CHỈ BÁO KHI ĐẠT MỐC MỚI
         should_alert = False
         
         if (price_change >= PUMP_THRESHOLD or price_change <= DUMP_THRESHOLD) and current_second > 2:
-            # Kiểm tra cooldown (5s) để tránh spam
+            # Kiểm tra xem đã báo ở mức này chưa
             last_alert = ALERTED_SYMBOLS.get(symbol)
-            if not last_alert or (now - last_alert).total_seconds() > 5.0:
+            
+            # Tính cooldown dựa trên mức độ biến động
+            if abs_change >= EXTREME_THRESHOLD:
+                cooldown = 10  # 10s cho biến động cực mạnh (để theo dõi đà)
+            elif abs_change >= MODERATE_MAX:
+                cooldown = 7   # 7s cho biến động mạnh
+            else:
+                cooldown = 3   # 3s cho biến động trung bình
+            
+            # Chỉ alert nếu:
+            # 1. Chưa từng alert, HOẶC
+            # 2. Đã qua cooldown, HOẶC
+            # 3. % change tăng thêm >= 2% so với lần báo trước
+            if not last_alert:
                 should_alert = True
+            else:
+                time_since_last = (now - last_alert).total_seconds()
+                last_max = MAX_CHANGES[symbol].get("last_alerted_pct", 0)
+                
+                if time_since_last > cooldown:
+                    # Chỉ báo nếu % change tăng đáng kể so với lần trước
+                    if abs_change >= abs(last_max) + 2.0:  # Tăng thêm >= 2%
+                        should_alert = True
+            
+            if should_alert:
                 ALERTED_SYMBOLS[symbol] = now
+                MAX_CHANGES[symbol]["last_alerted_pct"] = price_change  # Lưu % đã báo
 
         if should_alert and SUBSCRIBERS:
-            # Dùng BASE_PRICE và hiển thị % thay đổi
+            # Dùng BASE_PRICE và hiển thị % thay đổi TỔNG
             msg = fmt_alert(symbol, base_price, current_price, price_change)
 
             if price_change >= PUMP_THRESHOLD:
-                print(f"🚀 PUMP: {symbol} +{price_change:.2f}%")
+                print(f"🚀 PUMP: {symbol} +{price_change:.2f}% (max: +{MAX_CHANGES[symbol]['max_pct']:.2f}%)")
             else:
-                print(f"💥 DUMP: {symbol} {price_change:.2f}%")
-
-            # Reset base price SAU KHI alert (dynamic reset)
-            BASE_PRICES[symbol] = current_price
+                print(f"💥 DUMP: {symbol} {price_change:.2f}% (max: {MAX_CHANGES[symbol]['max_pct']:.2f}%)")
 
             # Gửi alert
             tasks = []
@@ -783,6 +881,8 @@ async def job_new_listing(context):
             alerts.append(f"🆕 *COIN MỚI LIST:* `{coin}`")
             print(f"🆕 NEW LISTING: {sym}")
         
+        save_data()  # Lưu danh sách coin mới
+        
         # Gửi thông báo
         text = "\n".join(alerts)
         
@@ -963,6 +1063,10 @@ def main():
     # Lấy danh sách symbols và khởi động WebSocket
     async def init_websocket(context):
         global ALL_SYMBOLS
+        
+        # Tải dữ liệu đã lưu (subscribers, modes, muted coins)
+        load_data()
+        
         async with aiohttp.ClientSession() as session:
             ALL_SYMBOLS = await get_all_symbols(session)
             print(f"✅ Tìm thấy {len(ALL_SYMBOLS)} coin")
