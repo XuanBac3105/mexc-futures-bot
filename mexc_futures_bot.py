@@ -557,6 +557,14 @@ async def process_ticker(ticker_data, context):
             if tasks:
                 try:
                     await asyncio.gather(*tasks, return_exceptions=True)
+                    # Nếu đây là alert cực mạnh (>= EXTREME_THRESHOLD) -> reset base ngay lập tức
+                    try:
+                        if abs_change >= EXTREME_THRESHOLD:
+                            BASE_PRICES[symbol] = current_price
+                            MAX_CHANGES[symbol] = {"max_pct": 0, "time": now}
+                            print(f"🔁 Reset base price for {symbol} after extreme alert ({abs_change:.2f}%)")
+                    except Exception:
+                        pass
                 except Exception as e:
                     print(f"❌ Lỗi gửi tin nhắn: {e}")
             
