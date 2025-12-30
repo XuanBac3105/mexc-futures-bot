@@ -1100,6 +1100,15 @@ async def post_init(app):
     """Set bot commands menu"""
     from telegram import BotCommand
     
+    # Kiểm tra bot token hoạt động
+    try:
+        bot_info = await app.bot.get_me()
+        print(f"✅ Bot đã kết nối: @{bot_info.username} (ID: {bot_info.id})")
+    except Exception as e:
+        print(f"❌ LỖI KẾT NỐI BOT: {e}")
+        print("❌ Kiểm tra lại BOT_TOKEN trên Railway!")
+        return
+    
     commands = [
         BotCommand("start", "Khởi động bot và xem hướng dẫn"),
         BotCommand("subscribe", "Bật thông báo pump/dump tự động"),
@@ -1123,7 +1132,7 @@ async def post_init(app):
         except Exception as e:
             print(f"⚠️ Lỗi set commands (attempt {attempt+1}/3): {e}")
             if attempt < 2:
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)  # Tăng từ 2s lên 5s
             else:
                 print("⚠️ Skip set commands, bot vẫn hoạt động bình thường")
 
