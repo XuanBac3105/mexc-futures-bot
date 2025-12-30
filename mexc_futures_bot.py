@@ -265,7 +265,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("Start command invoked but no message to reply to")
 
 
-@admin_only
 async def subscribe(update, context):
     SUBSCRIBERS.add(update.effective_chat.id)
     save_data()  # Lưu ngay sau khi subscribe
@@ -275,7 +274,6 @@ async def subscribe(update, context):
         print("Subscribe executed (no message to reply)")
 
 
-@admin_only
 async def unsubscribe(update, context):
     SUBSCRIBERS.discard(update.effective_chat.id)
     save_data()  # Lưu sau khi unsubscribe
@@ -285,7 +283,6 @@ async def unsubscribe(update, context):
         print("Unsubscribe executed (no message to reply)")
 
 
-@admin_only
 async def mode1(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 1
@@ -302,7 +299,6 @@ async def mode1(update, context):
         print("Mode1 set (no message to reply)")
 
 
-@admin_only
 async def mode2(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 2
@@ -318,7 +314,6 @@ async def mode2(update, context):
         print("Mode2 set (no message to reply)")
 
 
-@admin_only
 async def mode3(update, context):
     chat_id = update.effective_chat.id
     ALERT_MODE[chat_id] = 3
@@ -334,7 +329,6 @@ async def mode3(update, context):
         print("Mode3 set (no message to reply)")
 
 
-@admin_only
 async def mute_coin(update, context):
     chat_id = update.effective_chat.id
     
@@ -402,7 +396,6 @@ async def unmute_coin(update, context):
                 print("ℹ️ Trạng thái unmute không thể gửi (không có message)")
 
 
-@admin_only
 async def mutelist(update, context):
     chat_id = update.effective_chat.id
     
